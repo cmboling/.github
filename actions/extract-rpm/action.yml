@@ -1,45 +1,64 @@
-# .github/actions/extract-rpm/action.yml
 name: Extract RPM
-description: Extracts a .src.rpm and generates a FOSSA deps file
+description: Extracts a .src.rpm file and prepares a vendored dependency directory for FOSSA CLI analysis.
 
 inputs:
   rpm_name:
+    description: The RPM filename to extract (must be in current working directory)
     required: true
   dependency_name:
+    description: Name of the dependency for FOSSA
     required: true
   version:
+    description: Version string of the dependency
     required: true
   output_path:
+    description: Path where RPM contents will be extracted
     required: true
+
 runs:
   using: "composite"
   steps:
-    - shell: bash
+    - name: Create output directory
+      shell: bash
       run: |
-        set -euo pipefail
-
-        echo "Extracting ${{ inputs.rpm_name }} into ${{ inputs.output_path }}"
         mkdir -p "${{ inputs.output_path }}"
-        cp "${{ inputs.rpm_name }}" .
 
+    - name: Inspect file size
+      shell: bash
+      id: file-size
+      run: |
         FILE_SIZE=$(stat -c%s "${{ inputs.rpm_name }}")
         echo "RPM file size: $FILE_SIZE bytes ($(numfmt --to=iec $FILE_SIZE))"
+        echo "file_size=$FILE_SIZE" >> $GITHUB_OUTPUT
 
+    - name: Extract RPM (small files via rpm2cpio)
+      if: steps.file-size.outputs.file_size <= 4294967296  # 4GB
+      shell: bash
+      run: |
+        rpm2cpio "${{ inputs.rpm_name }}" | cpio -idmv -D "${{ inputs.output_path }}"
+
+    - name: Extract RPM (large files via 7zip)
+      if: steps.file-size.outputs.file_size > 4294967296
+      shell: bash
+      run: |
         cd "${{ inputs.output_path }}"
+        cp "../${{ inputs.rpm_name }}" .
+        7z x "${{ inputs.rpm_name }}" -y || true
 
-        if [ "$FILE_SIZE" -gt 4294967296 ]; then
-          7z x "../${{ inputs.rpm_name }}" -y
-          [ -f *.cpio.gz ] && gunzip *.cpio.gz
-          [ -f *.cpio.xz ] && xz -d *.cpio.xz
-          [ -f *.cpio ] && 7z x *.cpio -y || true
-        else
-          rpm2cpio "../${{ inputs.rpm_name }}" | cpio -idmv
+        if compgen -G "*.cpio.gz" > /dev/null; then gunzip *.cpio.gz; fi
+        if compgen -G "*.cpio.xz" > /dev/null; then xz -d *.cpio.xz; fi
+
+        if compgen -G "*.cpio" > /dev/null; then
+          for f in *.cpio; do 7z x "$f" -y; done
         fi
 
-        echo "Writing fossa-deps.yml..."
-        cat > ../../fossa-deps.yml <<EOF
+    - name: Generate fossa-deps.yml
+      shell: bash
+      run: |
+        cat > fossa-deps.yml <<EOF
 vendored-dependencies:
   - name: ${{ inputs.dependency_name }}
     version: "${{ inputs.version }}"
     path: "${{ inputs.output_path }}/"
 EOF
+        echo "✅ fossa-deps.yml generated for ${{ inputs.dependency_name }}@${{ inputs.version }}"
