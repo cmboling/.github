@@ -56,9 +56,9 @@ runs:
       shell: bash
       run: |
         cat > fossa-deps.yml <<EOF
-vendored-dependencies:
-  - name: ${{ inputs.dependency_name }}
-    version: "${{ inputs.version }}"
-    path: "${{ inputs.output_path }}/"
-EOF
+          vendored-dependencies:
+            - name: ${{ inputs.dependency_name }}
+              version: "${{ inputs.version }}"
+              path: "${{ inputs.output_path }}/"
+        EOF
         echo "✅ fossa-deps.yml generated for ${{ inputs.dependency_name }}@${{ inputs.version }}"
